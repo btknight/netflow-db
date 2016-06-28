@@ -105,10 +105,24 @@ NETFLOW_V9 = {
     'layer2packetsectionsize': 103,
     'layer2packetsectiondata': 104
 }
+STRUCT_LEN = {
+    2: "H",
+    4: "I",
+    8: "Q"
+}
 
 
 def unpack(data):
-    return struct.unpack('!', data)
+    ln = len(data)
+    if ln == 0:
+        raise Exception("data is length 0")
+    fmt = 'B'
+    if ln in STRUCT_LEN:
+        fmt = STRUCT_LEN[ln]
+    retval = struct.unpack('>%s' % fmt, data)
+    if len(retval) == 1:
+        retval = retval[0]
+    return retval
 
 class NetflowRecord(object):
     def __init__(self):
@@ -132,18 +146,28 @@ class NetflowRecordV9(NetflowRecord):
         self.data = [None for x in range(0, 128)]
         self.addr = None
 
-    def __getattr__(self, item):
-        if item not in NETFLOW_V9:
-            raise KeyError("'%s' not found" % item)
-        return self.data[NETFLOW_V9[item]]
+    def __getitem__(self, item):
+        val = None
+        if type(item) is int:
+            val = item
+        elif type(item) is str:
+            if item not in NETFLOW_V9:
+                raise KeyError("'%s' not found" % item)
+            val = NETFLOW_V9[item]
+        return self.data[val]
 
-    def __setattr__(self, item, value):
-        if item not in NETFLOW_V9:
-            raise KeyError("'%s' not found" % item)
-        self.data[NETFLOW_V9[item]] = value
+    def __setitem__(self, item, value):
+        val = None
+        if type(item) is int:
+            val = item
+        elif type(item) is str:
+            if item not in NETFLOW_V9:
+                raise KeyError("'%s' not found" % item)
+            val = NETFLOW_V9[item]
+        self.data[val] = value
 
     @staticmethod
-    def decode(self, data, addr):
+    def decode(data, addr):
         records = []
         version = unpack(data[0:2])
         if version != 9:
@@ -152,13 +176,14 @@ class NetflowRecordV9(NetflowRecord):
         seq = unpack(data[12:16])
         src_id = unpack(data[18:20])
         data = data[20:]
-        for i in range(0, fs_count):
+        fs_found = 0
+        while fs_found < fs_count:
             flow_set = unpack(data[0:2])
-            len_fs = unpack(data[2:4]) + 4
+            len_fs = unpack(data[2:4])
             data_fs = data[4:len_fs]
             data = data[len_fs:]
             if flow_set == 0:
-                NetflowRecordV9.decode_templates(data_fs, addr)
+                fs_found += NetflowRecordV9.decode_templates(data_fs, addr)
             else:
                 if (addr[0] not in NetflowRecordV9.templates or
                         flow_set not in NetflowRecordV9.templates[addr[0]]):
@@ -166,22 +191,29 @@ class NetflowRecordV9(NetflowRecord):
                     return []
                 new_recs = NetflowRecordV9.decode_records(data_fs, addr, flow_set)
                 records.extend(new_recs)
+                fs_found += len(new_recs)
         return records
 
     @staticmethod
     def decode_templates(data, addr):
+        fs_found = 0
         while len(data) > 0:
             template_id = unpack(data[0:2])
             field_ct = unpack(data[2:4])
             field_list = []
             data = data[4:]
             for i in range(0, field_ct):
-                field_def = tuple(unpack(data[0:2]), unpack(data[2:4]))
+                field_type = unpack(data[0:2])
+                field_len = unpack(data[2:4])
+                field_def = (field_type, field_len)
                 field_list.append(field_def)
                 data = data[4:]
             if addr[0] not in NetflowRecordV9.templates:
                 NetflowRecordV9.templates[addr[0]] = {}
-            NetflowRecordV9.templates[addr[0]][template_id] = (tuple(f[0], f[1]) for f in field_list)
+            NetflowRecordV9.templates[addr[0]][template_id] = tuple([(f[0], f[1]) for f in field_list])
+            print("Template: rec'd %d from %s" % (template_id, addr[0]))
+            fs_found += 1
+        return fs_found
 
     @staticmethod
     def decode_records(data, addr, flow_set):
@@ -195,9 +227,10 @@ class NetflowRecordV9(NetflowRecord):
             record.addr = addr
             for t_rec in template:
                 field_len = t_rec[1]
-                value = data[:field_len]
+                value = unpack(data[:field_len])
                 data = data[field_len:]
                 record[t_rec[0]] = value
+            records.append(record)
         return records
 
 
@@ -209,11 +242,13 @@ class NetflowProtocol(asyncio.DatagramProtocol):
         version = unpack(data[0:2])
         records = []
         if version == 9:
-            try:
-                records = NetflowRecordV9.decode(data)
-                print(dump(records))
-            except:
-                pass
+            records = NetflowRecordV9.decode(data, addr)
+            print(dump(records))
+            #try:
+            #    records = NetflowRecordV9.decode(data, addr)
+            #    print(dump(records))
+            #except:
+            #    pass
         else:
             print("Unsupported Netflow version %d" % version)
 
