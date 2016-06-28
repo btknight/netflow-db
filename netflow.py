@@ -23,13 +23,13 @@ NETFLOW_V5 = {
     'last_switched': 9,
     'l4_src_port': 10,
     'l4_dst_port': 11,
-    'tcp_flags': 13,
-    'protocol': 14,
-    'src_tos': 15,
-    'src_as': 16,
-    'dst_as': 17,
-    'src_mask': 18,
-    'dst_mask': 19,
+    'tcp_flags': 12,
+    'protocol': 13,
+    'src_tos': 14,
+    'src_as': 15,
+    'dst_as': 16,
+    'src_mask': 17,
+    'dst_mask': 18,
 }
 NETFLOW_V9 = {
     'in_bytes': 1,
@@ -165,6 +165,91 @@ class NetflowRecord(object):
         return []
 
 
+class NetflowRecordV5(NetflowRecord):
+    seq = None
+    time_offset = {}
+    template = {
+        (1, 0, 4),
+        (2, 4, 8),
+        (3, 8, 12),
+        (4, 12, 14),
+        (5, 14, 16),
+        (6, 16, 20),
+        (7, 20, 24),
+        (8, 24, 28),
+        (9, 28, 32),
+        (10, 32, 34),
+        (11, 34, 36),
+        (12, 37, 38),
+        (13, 38, 39),
+        (14, 39, 40),
+        (15, 40, 42),
+        (16, 42, 44),
+        (17, 44, 45),
+        (18, 45, 46),
+    }
+
+    def __init__(self):
+        self.data = [None for x in range(0, 19)]
+        self.version = 5
+
+    def __getitem__(self, item):
+        val = None
+        if type(item) is int:
+            val = item
+        elif type(item) is str and item in NETFLOW_V5:
+            val = NETFLOW_V5[item]
+        else:
+            return None
+        return self.data[val]
+
+    def __setitem__(self, item, value):
+        val = None
+        if type(item) is int:
+            val = item
+        elif type(item) is str and item in NETFLOW_V5:
+            val = NETFLOW_V5[item]
+        else:
+            return None
+        self.data[val] = value
+
+    @staticmethod
+    def decode(data, addr):
+        records = []
+        pkt_data = {}
+        version = unpack(data[0:2])
+        if version != 5:
+            return []
+        rc_count = unpack(data[2:4])
+        pkt_data['sysuptime'] = unpack(data[4:8])
+        pkt_data['unix_date'] = unpack(data[8:12])
+        seq = unpack(data[16:20])
+        pkt_data['src_id'] = unpack(data[20:22])
+        data = data[20:]
+        if NetflowRecordV5.seq is not None and seq != NetflowRecordV5.seq + rc_count:
+            print("Lost Netflow packets detected: at %d, expected %d, got %d" % (NetflowRecordV5.seq, NetflowRecordV5.seq + rc_count, seq))
+        NetflowRecordV5.seq = seq
+        NetflowRecordV5.time_offset[addr[0]] = pkt_data['unix_date'] - int(pkt_data['sysuptime'] / 1000)
+        rc_found = 0
+        while rc_found < rc_count:
+            rc_data = data[:48]
+            data = data[48:]
+            new_rec = NetflowRecordV5.decode_record(rc_data, addr, pkt_data)
+            records.append(new_rec)
+            rc_found += 1
+        return records
+
+    @staticmethod
+    def decode_record(data, addr, pkt_data):
+        record = NetflowRecordV5()
+        record.src_id = pkt_data['src_id']
+        record.addr = addr
+        record.time_offset = NetflowRecordV5.time_offset[addr[0]]
+        for (a, i, j) in NetflowRecordV5.template:
+            record[a] = unpack(data[i:j])
+        return record
+
+
 class NetflowRecordV9(NetflowRecord):
     templates = {}
     seq = None
@@ -173,10 +258,7 @@ class NetflowRecordV9(NetflowRecord):
     def __init__(self):
         self.data = [None for x in range(0, 128)]
         self.version = 9
-        self.addr = None
-        self.src_id = None
         self.flow_set = None
-        self.time_offset = None
 
     def __getitem__(self, item):
         val = None
@@ -285,14 +367,17 @@ class NetflowProtocol(asyncio.DatagramProtocol):
         records = []
         if version == 9:
             records = NetflowRecordV9.decode(data, addr)
-            print(dump(records))
+        elif version == 5:
+            records = NetflowRecordV5.decode(data, addr)
             #try:
             #    records = NetflowRecordV9.decode(data, addr)
             #    print(dump(records))
             #except:
             #    pass
         else:
-            print("Unsupported Netflow version %d" % version)
+            print("Unsupported Netflow version %d from %s:%s" % (version, addr[0], addr[1]))
+        if len(records) > 0:
+            print(dump(records))
 
 
 loop = asyncio.get_event_loop()
