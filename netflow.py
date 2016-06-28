@@ -8,8 +8,29 @@ from dumper import dump
 import asyncio
 import struct
 import ipaddress
+import datetime
 
 
+NETFLOW_V5 = {
+    'ipv4_src_addr': 1,
+    'ipv4_dst_addr': 2,
+    'ipv4_next_hop': 3,
+    'input_snmp': 4,
+    'output_snmp': 5,
+    'in_pkts': 6,
+    'in_bytes': 7,
+    'first_switched': 8,
+    'last_switched': 9,
+    'l4_src_port': 10,
+    'l4_dst_port': 11,
+    'tcp_flags': 13,
+    'protocol': 14,
+    'src_tos': 15,
+    'src_as': 16,
+    'dst_as': 17,
+    'src_mask': 18,
+    'dst_mask': 19,
+}
 NETFLOW_V9 = {
     'in_bytes': 1,
     'in_pkts': 2,
@@ -124,10 +145,14 @@ def unpack(data):
         retval = retval[0]
     return retval
 
+
 class NetflowRecord(object):
     def __init__(self):
         self.data = []
+        self.version = 0
         self.addr = None
+        self.src_id = None
+        self.time_offset = None
 
     def __getitem__(self, item):
         return self.data[item]
@@ -135,47 +160,61 @@ class NetflowRecord(object):
     def __setitem__(self, item, value):
         self.data[item] = value
 
-    def decode_record(self, data, addr):
-        pass
+    @staticmethod
+    def decode(data, addr):
+        return []
 
 
 class NetflowRecordV9(NetflowRecord):
     templates = {}
+    seq = None
+    time_offset = {}
 
     def __init__(self):
         self.data = [None for x in range(0, 128)]
+        self.version = 9
         self.addr = None
+        self.src_id = None
+        self.flow_set = None
+        self.time_offset = None
 
     def __getitem__(self, item):
         val = None
         if type(item) is int:
             val = item
-        elif type(item) is str:
-            if item not in NETFLOW_V9:
-                raise KeyError("'%s' not found" % item)
+        elif type(item) is str and item in NETFLOW_V9:
             val = NETFLOW_V9[item]
+        else:
+            return None
         return self.data[val]
 
     def __setitem__(self, item, value):
         val = None
         if type(item) is int:
             val = item
-        elif type(item) is str:
-            if item not in NETFLOW_V9:
-                raise KeyError("'%s' not found" % item)
+        elif type(item) is str and item in NETFLOW_V9:
             val = NETFLOW_V9[item]
+        else:
+            return None
         self.data[val] = value
 
     @staticmethod
     def decode(data, addr):
         records = []
+        pkt_data = {}
         version = unpack(data[0:2])
         if version != 9:
             return []
         fs_count = unpack(data[2:4])
+        pkt_data['sysuptime'] = unpack(data[4:8])
+        pkt_data['unix_date'] = unpack(data[8:12])
         seq = unpack(data[12:16])
-        src_id = unpack(data[18:20])
+        pkt_data['src_id'] = unpack(data[18:20])
         data = data[20:]
+        if NetflowRecordV9.seq is not None and seq != NetflowRecordV9.seq + 1:
+            print("Lost Netflow packets detected: expected %d, got %d" % (NetflowRecordV9.seq + 1, seq))
+        NetflowRecordV9.seq = seq
+        NetflowRecordV9.time_offset[addr[0]] = pkt_data['unix_date'] - int(pkt_data['sysuptime'] / 1000)
         fs_found = 0
         while fs_found < fs_count:
             flow_set = unpack(data[0:2])
@@ -189,7 +228,7 @@ class NetflowRecordV9(NetflowRecord):
                         flow_set not in NetflowRecordV9.templates[addr[0]]):
                     print("Template %s:%d not configured yet" % (addr[0], flow_set))
                     return []
-                new_recs = NetflowRecordV9.decode_records(data_fs, addr, flow_set)
+                new_recs = NetflowRecordV9.decode_records(data_fs, addr, pkt_data, flow_set)
                 records.extend(new_recs)
                 fs_found += len(new_recs)
         return records
@@ -216,7 +255,7 @@ class NetflowRecordV9(NetflowRecord):
         return fs_found
 
     @staticmethod
-    def decode_records(data, addr, flow_set):
+    def decode_records(data, addr, pkt_data, flow_set):
         records = []
         template = NetflowRecordV9.templates[addr[0]][flow_set]
         rec_len = 0
@@ -224,7 +263,10 @@ class NetflowRecordV9(NetflowRecord):
             rec_len += t_rec[1]
         while len(data) >= rec_len:
             record = NetflowRecordV9()
+            record.flow_set = flow_set
+            record.src_id = pkt_data['src_id']
             record.addr = addr
+            record.time_offset = NetflowRecordV9.time_offset[addr[0]]
             for t_rec in template:
                 field_len = t_rec[1]
                 value = unpack(data[:field_len])
