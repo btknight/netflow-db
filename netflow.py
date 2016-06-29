@@ -2,13 +2,15 @@
 #
 # netflow.py
 #
-# Decodes netflow messages
+# Decodes netflow messages and stores them in a database
 
 from dumper import dump
 import asyncio
+import queue
+import threading
 import struct
 import ipaddress
-import datetime
+import time
 
 
 NETFLOW_REC_V5 = {
@@ -128,10 +130,12 @@ NETFLOW_REC_V9 = {
     104: 'layer2packetsectiondata',
 }
 STRUCT_LEN = {
+    1: "B",
     2: "H",
     4: "I",
     8: "Q"
 }
+ALL_FIELDS = ['version', 'reporter', 'src_id', 'time_offset'] + [r for r in NETFLOW_REC_V9.values()]
 
 
 def unpack(data):
@@ -151,7 +155,7 @@ class NetflowRecord(object):
     def __init__(self):
         self.data = {}
         self['version'] = 0
-        self['addr'] = None
+        self['reporter'] = None
         self['src_id'] = None
         self['time_offset'] = None
 
@@ -160,6 +164,12 @@ class NetflowRecord(object):
 
     def __setitem__(self, item, value):
         self.data[item] = value
+
+    def __iter__(self):
+        return self.data.__iter__()
+
+    def keys(self):
+        return self.data.keys()
 
     @staticmethod
     def decode(data, addr):
@@ -224,7 +234,7 @@ class NetflowRecordV5(NetflowRecord):
     def decode_record(data, addr, pkt_data):
         record = NetflowRecordV5()
         record['src_id'] = pkt_data['src_id']
-        record['addr'] = addr
+        record['reporter'] = int(ipaddress.IPv4Address(addr[0]))
         record['time_offset'] = NetflowRecordV5.time_offset[addr[0]]
         for (a, i, j) in NetflowRecordV5.template:
             rec_name = NETFLOW_REC_V5[a]
@@ -307,7 +317,7 @@ class NetflowRecordV9(NetflowRecord):
         while len(data) >= rec_len:
             record = NetflowRecordV9()
             record['src_id'] = pkt_data['src_id']
-            record['addr'] = addr
+            record['reporter'] = int(ipaddress.IPv4Address(addr[0]))
             record['time_offset'] = NetflowRecordV9.time_offset[addr[0]]
             for t_rec in template:
                 if t_rec[0] in NETFLOW_REC_V9:
@@ -315,7 +325,11 @@ class NetflowRecordV9(NetflowRecord):
                 else:
                     field_name = str(t_rec[0])
                 field_len = t_rec[1]
-                value = unpack(data[:field_len])
+                value = None
+                if field_len in STRUCT_LEN:
+                    value = unpack(data[:field_len])
+                else:
+                    value = data[:field_len]
                 data = data[field_len:]
                 record[field_name] = value
             records.append(record)
@@ -323,10 +337,13 @@ class NetflowRecordV9(NetflowRecord):
 
 
 class NetflowProtocol(asyncio.DatagramProtocol):
+    db_q = queue.Queue()
+
     def connection_made(self, transport):
         print("connected to Netflow socket")
 
     def datagram_received(self, data, addr):
+        global db_q
         version = unpack(data[0:2])
         records = []
         if version == 9:
@@ -341,19 +358,64 @@ class NetflowProtocol(asyncio.DatagramProtocol):
         else:
             print("Unsupported Netflow version %d from %s:%s" % (version, addr[0], addr[1]))
         if len(records) > 0:
-            print(dump(records))
+            print("adding %d records to queue" % len(records))
+        for r in records:
+            NetflowProtocol.db_q.put(r)
 
 
-loop = asyncio.get_event_loop()
-print("Starting UDP server")
-listen = loop.create_datagram_endpoint(NetflowProtocol, local_addr=('0.0.0.0', 5000))
-transport, protocol = loop.run_until_complete(listen)
+class DB(threading.Thread):
+    def __init__(self, queue, shutdown_event):
+        self.queue = queue
+        self.shutdown_event = shutdown_event
+        super().__init__()
+        self.conn = None
 
-try:
-    loop.run_forever()
-except KeyboardInterrupt:
-    pass
+    def run(self):
+        while True:
+            if self.shutdown_event.is_set():
+                self.disconnect()
+                self.stop()
+            while not self.queue.empty():
+                self.output_record(self.queue.get())
+                self.queue.task_done()
+                #try:
+                #    self.output_record(self.queue.get())
+                #    self.queue.task_done()
+                #except Exception as e:
+                #    print("error: %s" % str(e))
+                if self.shutdown_event.is_set():
+                    self.disconnect()
+                    self.stop()
+            time.sleep(1)
 
-transport.close()
-loop.close()
+    def output_record(self, record):
+        column_list = [r for r in ALL_FIELDS if r in record]
+        output_list = [str(record[r]) for r in column_list]
+        print("INSERT (" + ", ".join(column_list) + ") VALUES (" + ", ".join(output_list) + ")")
 
+    def disconnect(self):
+        pass
+
+
+def main():
+    db_shutdown = threading.Event()
+    db = DB(queue=NetflowProtocol.db_q, shutdown_event=db_shutdown)
+    db.start()
+
+    loop = asyncio.get_event_loop()
+    print("Starting UDP server")
+    listen = loop.create_datagram_endpoint(NetflowProtocol, local_addr=('0.0.0.0', 5000))
+    transport, protocol = loop.run_until_complete(listen)
+
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+
+    transport.close()
+    loop.close()
+    db_shutdown.set()
+    db.join(10)
+
+if __name__ == '__main__':
+    main()
