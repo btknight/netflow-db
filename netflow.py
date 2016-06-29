@@ -11,120 +11,121 @@ import ipaddress
 import datetime
 
 
-NETFLOW_V5 = {
-    'ipv4_src_addr': 1,
-    'ipv4_dst_addr': 2,
-    'ipv4_next_hop': 3,
-    'input_snmp': 4,
-    'output_snmp': 5,
-    'in_pkts': 6,
-    'in_bytes': 7,
-    'first_switched': 8,
-    'last_switched': 9,
-    'l4_src_port': 10,
-    'l4_dst_port': 11,
-    'tcp_flags': 12,
-    'protocol': 13,
-    'src_tos': 14,
-    'src_as': 15,
-    'dst_as': 16,
-    'src_mask': 17,
-    'dst_mask': 18,
+NETFLOW_REC_V5 = {
+    1: 'ipv4_src_addr',
+    2: 'ipv4_dst_addr',
+    3: 'ipv4_next_hop',
+    4: 'input_snmp',
+    5: 'output_snmp',
+    6: 'in_pkts',
+    7: 'in_bytes',
+    8: 'first_switched',
+    9: 'last_switched',
+    10: 'l4_src_port',
+    11: 'l4_dst_port',
+    12: 'tcp_flags',
+    13: 'protocol',
+    14: 'src_tos',
+    15: 'src_as',
+    16: 'dst_as',
+    17: 'src_mask',
+    18: 'dst_mask',
 }
-NETFLOW_V9 = {
-    'in_bytes': 1,
-    'in_pkts': 2,
-    'flows': 3,
-    'protocol': 4,
-    'src_tos': 5,
-    'tcp_flags': 6,
-    'l4_src_port': 7,
-    'ipv4_src_addr': 8,
-    'src_mask': 9,
-    'input_snmp': 10,
-    'l4_dst_port': 11,
-    'ipv4_dst_addr': 12,
-    'dst_mask': 13,
-    'output_snmp': 14,
-    'ipv4_next_hop': 15,
-    'src_as': 16,
-    'dst_as': 17,
-    'bgp_ipv4_next_hop': 18,
-    'mul_dst_pkts': 19,
-    'mul_dst_bytes': 20,
-    'last_switched': 21,
-    'first_switched': 22,
-    'out_bytes': 23,
-    'out_pkts': 24,
-    'min_pkt_lngth': 25,
-    'max_pkt_lngth': 26,
-    'ipv6_src_addr': 27,
-    'ipv6_dst_addr': 28,
-    'ipv6_src_mask': 29,
-    'ipv6_dst_mask': 30,
-    'ipv6_flow_label': 31,
-    'icmp_type': 32,
-    'mul_igmp_type': 33,
-    'sampling_interval': 34,
-    'sampling_algorithm': 35,
-    'flow_active_timeout': 36,
-    'flow_inactive_timeout': 37,
-    'engine_type': 38,
-    'engine_id': 39,
-    'total_bytes_exp': 40,
-    'total_pkts_exp': 41,
-    'total_flows_exp': 42,
-    'ipv4_src_prefix': 44,
-    'ipv4_dst_prefix': 45,
-    'mpls_top_label_type': 46,
-    'mpls_top_label_ip_addr': 47,
-    'flow_sampler_id': 48,
-    'flow_sampler_mode': 49,
-    'flow_sampler_random_interval': 50,
-    'min_ttl': 52,
-    'max_ttl': 53,
-    'ipv4_ident': 54,
-    'dst_tos': 55,
-    'in_src_mac': 56,
-    'out_dst_mac': 57,
-    'src_vlan': 58,
-    'dst_vlan': 59,
-    'ip_protocol_version': 60,
-    'direction': 61,
-    'ipv6_next_hop': 62,
-    'bgp_ipv6_next_hop': 63,
-    'ipv6_option_headers': 64,
-    'mpls_label_1': 70,
-    'mpls_label_2': 71,
-    'mpls_label_3': 72,
-    'mpls_label_4': 73,
-    'mpls_label_5': 74,
-    'mpls_label_6': 75,
-    'mpls_label_7': 76,
-    'mpls_label_8': 77,
-    'mpls_label_9': 78,
-    'mpls_label_10': 79,
-    'in_dst_mac': 80,
-    'out_src_mac': 81,
-    'if_name': 82,
-    'if_desc': 83,
-    'sampler_name': 84,
-    'in_permanent_bytes': 85,
-    'in_permanent_pkts': 86,
-    'fragment_offset': 88,
-    'forwarding status': 89,
-    'mpls_pal_rd': 90,
-    'mpls_prefix_len': 91,
-    'src_traffic_index': 92,
-    'dst_traffic_index': 93,
-    'application_description': 94,
-    'application_tag': 95,
-    'application_name': 96,
-    'postipdiffservcodepoint': 98,
-    'replication_factor': 99,
-    'layer2packetsectionoffset': 102,
-    'layer2packetsectionsize': 103,
-    'layer2packetsectiondata': 104
+NETFLOW_REC_V9 = {
+    1: 'in_bytes',
+    2: 'in_pkts',
+    3: 'flows',
+    4: 'protocol',
+    5: 'src_tos',
+    6: 'tcp_flags',
+    7: 'l4_src_port',
+    8: 'ipv4_src_addr',
+    9: 'src_mask',
+    10: 'input_snmp',
+    11: 'l4_dst_port',
+    12: 'ipv4_dst_addr',
+    13: 'dst_mask',
+    14: 'output_snmp',
+    15: 'ipv4_next_hop',
+    16: 'src_as',
+    17: 'dst_as',
+    18: 'bgp_ipv4_next_hop',
+    19: 'mul_dst_pkts',
+    20: 'mul_dst_bytes',
+    21: 'last_switched',
+    22: 'first_switched',
+    23: 'out_bytes',
+    24: 'out_pkts',
+    25: 'min_pkt_lngth',
+    26: 'max_pkt_lngth',
+    27: 'ipv6_src_addr',
+    28: 'ipv6_dst_addr',
+    29: 'ipv6_src_mask',
+    30: 'ipv6_dst_mask',
+    31: 'ipv6_flow_label',
+    32: 'icmp_type',
+    33: 'mul_igmp_type',
+    34: 'sampling_interval',
+    35: 'sampling_algorithm',
+    36: 'flow_active_timeout',
+    37: 'flow_inactive_timeout',
+    38: 'engine_type',
+    39: 'engine_id',
+    40: 'total_bytes_exp',
+    41: 'total_pkts_exp',
+    42: 'total_flows_exp',
+    44: 'ipv4_src_prefix',
+    45: 'ipv4_dst_prefix',
+    46: 'mpls_top_label_type',
+    47: 'mpls_top_label_ip_addr',
+    48: 'flow_sampler_id',
+    49: 'flow_sampler_mode',
+    50: 'flow_sampler_random_interval',
+    52: 'min_ttl',
+    53: 'max_ttl',
+    54: 'ipv4_ident',
+    55: 'dst_tos',
+    56: 'in_src_mac',
+    57: 'out_dst_mac',
+    58: 'src_vlan',
+    59: 'dst_vlan',
+    60: 'ip_protocol_version',
+    61: 'direction',
+    62: 'ipv6_next_hop',
+    63: 'bpg_ipv6_next_hop',
+    64: 'ipv6_option_headers',
+    70: 'mpls_label_1',
+    71: 'mpls_label_2',
+    72: 'mpls_label_3',
+    73: 'mpls_label_4',
+    74: 'mpls_label_5',
+    75: 'mpls_label_6',
+    76: 'mpls_label_7',
+    77: 'mpls_label_8',
+    78: 'mpls_label_9',
+    79: 'mpls_label_10',
+    80: 'in_dst_mac',
+    81: 'out_src_mac',
+    82: 'if_name',
+    83: 'if_desc',
+    84: 'sampler_name',
+    85: 'in_ permanent _bytes',
+    86: 'in_ permanent _pkts',
+    88: 'fragment_offset',
+    89: 'forwarding status',
+    90: 'mpls pal rd',
+    91: 'mpls prefix len',
+    92: 'src traffic index',
+    93: 'dst traffic index',
+    94: 'application description',
+    95: 'application tag',
+    96: 'application name',
+    98: 'postipdiffservcodepoint',
+    99: 'replication factor',
+    100: 'deprecated',
+    102: 'layer2packetsectionoffset',
+    103: 'layer2packetsectionsize',
+    104: 'layer2packetsectiondata',
 }
 STRUCT_LEN = {
     2: "H",
@@ -148,11 +149,11 @@ def unpack(data):
 
 class NetflowRecord(object):
     def __init__(self):
-        self.data = []
-        self.version = 0
-        self.addr = None
-        self.src_id = None
-        self.time_offset = None
+        self.data = {}
+        self['version'] = 0
+        self['addr'] = None
+        self['src_id'] = None
+        self['time_offset'] = None
 
     def __getitem__(self, item):
         return self.data[item]
@@ -166,7 +167,7 @@ class NetflowRecord(object):
 
 
 class NetflowRecordV5(NetflowRecord):
-    seq = None
+    next_seq = None
     time_offset = {}
     template = {
         (1, 0, 4),
@@ -190,28 +191,8 @@ class NetflowRecordV5(NetflowRecord):
     }
 
     def __init__(self):
-        self.data = [None for x in range(0, 19)]
-        self.version = 5
-
-    def __getitem__(self, item):
-        val = None
-        if type(item) is int:
-            val = item
-        elif type(item) is str and item in NETFLOW_V5:
-            val = NETFLOW_V5[item]
-        else:
-            return None
-        return self.data[val]
-
-    def __setitem__(self, item, value):
-        val = None
-        if type(item) is int:
-            val = item
-        elif type(item) is str and item in NETFLOW_V5:
-            val = NETFLOW_V5[item]
-        else:
-            return None
-        self.data[val] = value
+        super().__init__()
+        self['version'] = 5
 
     @staticmethod
     def decode(data, addr):
@@ -226,9 +207,9 @@ class NetflowRecordV5(NetflowRecord):
         seq = unpack(data[16:20])
         pkt_data['src_id'] = unpack(data[20:22])
         data = data[20:]
-        if NetflowRecordV5.seq is not None and seq != NetflowRecordV5.seq + rc_count:
-            print("Lost Netflow packets detected: at %d, expected %d, got %d" % (NetflowRecordV5.seq, NetflowRecordV5.seq + rc_count, seq))
-        NetflowRecordV5.seq = seq
+        if NetflowRecordV5.next_seq is not None and seq != NetflowRecordV5.next_seq:
+            print("Lost Netflow packets detected: expected %d, got %d" % (NetflowRecordV5.next_seq, seq))
+        NetflowRecordV5.next_seq = seq + rc_count
         NetflowRecordV5.time_offset[addr[0]] = pkt_data['unix_date'] - int(pkt_data['sysuptime'] / 1000)
         rc_found = 0
         while rc_found < rc_count:
@@ -242,11 +223,12 @@ class NetflowRecordV5(NetflowRecord):
     @staticmethod
     def decode_record(data, addr, pkt_data):
         record = NetflowRecordV5()
-        record.src_id = pkt_data['src_id']
-        record.addr = addr
-        record.time_offset = NetflowRecordV5.time_offset[addr[0]]
+        record['src_id'] = pkt_data['src_id']
+        record['addr'] = addr
+        record['time_offset'] = NetflowRecordV5.time_offset[addr[0]]
         for (a, i, j) in NetflowRecordV5.template:
-            record[a] = unpack(data[i:j])
+            rec_name = NETFLOW_REC_V5[a]
+            record[rec_name] = unpack(data[i:j])
         return record
 
 
@@ -256,29 +238,8 @@ class NetflowRecordV9(NetflowRecord):
     time_offset = {}
 
     def __init__(self):
-        self.data = [None for x in range(0, 128)]
-        self.version = 9
-        self.flow_set = None
-
-    def __getitem__(self, item):
-        val = None
-        if type(item) is int:
-            val = item
-        elif type(item) is str and item in NETFLOW_V9:
-            val = NETFLOW_V9[item]
-        else:
-            return None
-        return self.data[val]
-
-    def __setitem__(self, item, value):
-        val = None
-        if type(item) is int:
-            val = item
-        elif type(item) is str and item in NETFLOW_V9:
-            val = NETFLOW_V9[item]
-        else:
-            return None
-        self.data[val] = value
+        super().__init__()
+        self['version'] = 9
 
     @staticmethod
     def decode(data, addr):
@@ -299,18 +260,18 @@ class NetflowRecordV9(NetflowRecord):
         NetflowRecordV9.time_offset[addr[0]] = pkt_data['unix_date'] - int(pkt_data['sysuptime'] / 1000)
         fs_found = 0
         while fs_found < fs_count:
-            flow_set = unpack(data[0:2])
+            template = unpack(data[0:2])
             len_fs = unpack(data[2:4])
             data_fs = data[4:len_fs]
             data = data[len_fs:]
-            if flow_set == 0:
+            if template == 0:
                 fs_found += NetflowRecordV9.decode_templates(data_fs, addr)
             else:
                 if (addr[0] not in NetflowRecordV9.templates or
-                        flow_set not in NetflowRecordV9.templates[addr[0]]):
-                    print("Template %s:%d not configured yet" % (addr[0], flow_set))
+                        template not in NetflowRecordV9.templates[addr[0]]):
+                    print("Template %s:%d not configured yet" % (addr[0], template))
                     return []
-                new_recs = NetflowRecordV9.decode_records(data_fs, addr, pkt_data, flow_set)
+                new_recs = NetflowRecordV9.decode_records(data_fs, addr, pkt_data, template)
                 records.extend(new_recs)
                 fs_found += len(new_recs)
         return records
@@ -337,23 +298,26 @@ class NetflowRecordV9(NetflowRecord):
         return fs_found
 
     @staticmethod
-    def decode_records(data, addr, pkt_data, flow_set):
+    def decode_records(data, addr, pkt_data, template):
         records = []
-        template = NetflowRecordV9.templates[addr[0]][flow_set]
+        template = NetflowRecordV9.templates[addr[0]][template]
         rec_len = 0
         for t_rec in template:
             rec_len += t_rec[1]
         while len(data) >= rec_len:
             record = NetflowRecordV9()
-            record.flow_set = flow_set
-            record.src_id = pkt_data['src_id']
-            record.addr = addr
-            record.time_offset = NetflowRecordV9.time_offset[addr[0]]
+            record['src_id'] = pkt_data['src_id']
+            record['addr'] = addr
+            record['time_offset'] = NetflowRecordV9.time_offset[addr[0]]
             for t_rec in template:
+                if t_rec[0] in NETFLOW_REC_V9:
+                    field_name = NETFLOW_REC_V9[t_rec[0]]
+                else:
+                    field_name = str(t_rec[0])
                 field_len = t_rec[1]
                 value = unpack(data[:field_len])
                 data = data[field_len:]
-                record[t_rec[0]] = value
+                record[field_name] = value
             records.append(record)
         return records
 
