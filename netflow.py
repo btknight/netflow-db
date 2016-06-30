@@ -4,15 +4,21 @@
 #
 # Decodes netflow messages and stores them in a database
 
-from dumper import dump
 import asyncio
 import queue
 import threading
 import struct
 import ipaddress
 import time
+import mysql.connector
 
 
+SQL_CONNECT = {
+    'user': 'netflow',
+    'password': 'netflow',
+    'host': '10.0.42.71',
+    'database': 'netflow'
+}
 NETFLOW_REC_V5 = {
     1: 'ipv4_src_addr',
     2: 'ipv4_dst_addr',
@@ -124,7 +130,6 @@ NETFLOW_REC_V9 = {
     96: 'application name',
     98: 'postipdiffservcodepoint',
     99: 'replication factor',
-    100: 'deprecated',
     102: 'layer2packetsectionoffset',
     103: 'layer2packetsectionsize',
     104: 'layer2packetsectiondata',
@@ -350,11 +355,6 @@ class NetflowProtocol(asyncio.DatagramProtocol):
             records = NetflowRecordV9.decode(data, addr)
         elif version == 5:
             records = NetflowRecordV5.decode(data, addr)
-            #try:
-            #    records = NetflowRecordV9.decode(data, addr)
-            #    print(dump(records))
-            #except:
-            #    pass
         else:
             print("Unsupported Netflow version %d from %s:%s" % (version, addr[0], addr[1]))
         if len(records) > 0:
@@ -372,29 +372,160 @@ class DB(threading.Thread):
 
     def run(self):
         while True:
+            try:
+                self.connect()
+                self.main_loop()
+            except Exception as e:
+                print("Error: %s" % str(e))
+
+    def main_loop(self):
+        while True:
             if self.shutdown_event.is_set():
                 self.disconnect()
                 self.stop()
             while not self.queue.empty():
-                self.output_record(self.queue.get())
+                c = self.conn.cursor()
+                self.output_record(self.queue.get(), c)
+                self.conn.commit()
+                c.close()
                 self.queue.task_done()
-                #try:
-                #    self.output_record(self.queue.get())
-                #    self.queue.task_done()
-                #except Exception as e:
-                #    print("error: %s" % str(e))
                 if self.shutdown_event.is_set():
                     self.disconnect()
                     self.stop()
             time.sleep(1)
 
-    def output_record(self, record):
+    def output_record(self, record, c):
         column_list = [r for r in ALL_FIELDS if r in record]
         output_list = [str(record[r]) for r in column_list]
-        print("INSERT (" + ", ".join(column_list) + ") VALUES (" + ", ".join(output_list) + ")")
+        placeholder_list = ["%s" for r in column_list]
+        query = "INSERT INTO netflow (" + ", ".join(column_list) + ") VALUES (" + ", ".join(placeholder_list) + ");"
+        c.execute(query, output_list)
+
+    def connect(self):
+        if self.conn is None or not self.conn.is_connected():
+            self.conn = mysql.connector.connect(**SQL_CONNECT)
+            self.create_tables()
+
+    def create_tables(self):
+        if self.conn is not None:
+            query = "show tables;"
+            c = self.conn.cursor()
+            c.execute(query)
+            tables = {r[0] for r in c}
+            c.close()
+            if 'netflow' not in tables:
+                c = self.conn.cursor()
+                query = """
+                CREATE TABLE netflow (
+                    id INT NOT NULL AUTO_INCREMENT
+                    , version TINYINT NOT NULL
+                    , reporter INT UNSIGNED NOT NULL
+                    , src_id SMALLINT UNSIGNED NOT NULL
+                    , time_offset INT UNSIGNED NOT NULL
+                    , in_bytes BIGINT UNSIGNED
+                    , input_snmp INT UNSIGNED
+                    , layer2packetsectionoffset INT UNSIGNED
+                    , layer2packetsectionsize INT UNSIGNED
+                    , layer2packetsectiondata INT UNSIGNED
+                    , l4_dst_port SMALLINT UNSIGNED
+                    , ipv4_dst_addr INT UNSIGNED
+                    , dst_mask TINYINT UNSIGNED
+                    , output_snmp INT UNSIGNED
+                    , ipv4_next_hop INT UNSIGNED
+                    , src_as INT UNSIGNED
+                    , dst_as INT UNSIGNED
+                    , bgp_ipv4_next_hop INT UNSIGNED
+                    , mul_dst_pkts INT UNSIGNED
+                    , in_pkts BIGINT UNSIGNED
+                    , mul_dst_bytes INT UNSIGNED
+                    , last_switched INT UNSIGNED
+                    , first_switched INT UNSIGNED
+                    , out_bytes INT UNSIGNED
+                    , out_pkts INT UNSIGNED
+                    , min_pkt_lngth SMALLINT UNSIGNED
+                    , max_pkt_lngth SMALLINT UNSIGNED
+                    , ipv6_src_addr VARBINARY(16)
+                    , ipv6_dst_addr VARBINARY(16)
+                    , ipv6_src_mask TINYINT UNSIGNED
+                    , flows BIGINT UNSIGNED
+                    , ipv6_dst_mask TINYINT UNSIGNED
+                    , ipv6_flow_label INT UNSIGNED
+                    , icmp_type SMALLINT UNSIGNED
+                    , mul_igmp_type TINYINT UNSIGNED
+                    , sampling_interval INT UNSIGNED
+                    , sampling_algorithm TINYINT UNSIGNED
+                    , flow_active_timeout SMALLINT UNSIGNED
+                    , flow_inactive_timeout SMALLINT UNSIGNED
+                    , engine_type TINYINT UNSIGNED
+                    , engine_id TINYINT UNSIGNED
+                    , protocol TINYINT UNSIGNED
+                    , total_bytes_exp BIGINT UNSIGNED
+                    , total_pkts_exp BIGINT UNSIGNED
+                    , total_flows_exp BIGINT UNSIGNED
+                    , ipv4_src_prefix INT UNSIGNED
+                    , ipv4_dst_prefix INT UNSIGNED
+                    , mpls_top_label_type TINYINT UNSIGNED
+                    , mpls_top_label_ip_addr INT UNSIGNED
+                    , flow_sampler_id TINYINT UNSIGNED
+                    , flow_sampler_mode TINYINT UNSIGNED
+                    , src_tos TINYINT UNSIGNED
+                    , flow_sampler_random_interval INT UNSIGNED
+                    , min_ttl TINYINT UNSIGNED
+                    , max_ttl TINYINT UNSIGNED
+                    , ipv4_ident SMALLINT UNSIGNED
+                    , dst_tos TINYINT UNSIGNED
+                    , in_src_mac BIGINT UNSIGNED
+                    , out_dst_mac BIGINT UNSIGNED
+                    , src_vlan SMALLINT UNSIGNED
+                    , dst_vlan SMALLINT UNSIGNED
+                    , tcp_flags TINYINT UNSIGNED
+                    , ip_protocol_version TINYINT UNSIGNED
+                    , direction TINYINT UNSIGNED
+                    , ipv6_next_hop BINARY(16)
+                    , bgp_ipv6_next_hop BINARY(16)
+                    , ipv6_option_headers INT UNSIGNED
+                    , l4_src_port SMALLINT UNSIGNED
+                    , mpls_label_1 INT UNSIGNED
+                    , mpls_label_2 INT UNSIGNED
+                    , mpls_label_3 INT UNSIGNED
+                    , mpls_label_4 INT UNSIGNED
+                    , mpls_label_5 INT UNSIGNED
+                    , mpls_label_6 INT UNSIGNED
+                    , mpls_label_7 INT UNSIGNED
+                    , mpls_label_8 INT UNSIGNED
+                    , mpls_label_9 INT UNSIGNED
+                    , mpls_label_10 INT UNSIGNED
+                    , ipv4_src_addr INT UNSIGNED
+                    , in_dst_mac BIGINT UNSIGNED
+                    , out_src_mac BIGINT UNSIGNED
+                    , if_name VARBINARY(80)
+                    , if_desc VARBINARY(256)
+                    , sampler_name VARBINARY(256)
+                    , in_permanent_bytes BIGINT UNSIGNED
+                    , in_permanent_pkts BIGINT UNSIGNED
+                    , fragment_offset SMALLINT UNSIGNED
+                    , forwarding_status TINYINT UNSIGNED
+                    , src_mask TINYINT UNSIGNED
+                    , mpls_pal_rd BIGINT UNSIGNED
+                    , mpls_prefix_len TINYINT UNSIGNED
+                    , src_traffic_index INT UNSIGNED
+                    , dst_traffic_index INT UNSIGNED
+                    , application_description VARBINARY(256)
+                    , application_tag VARBINARY(256)
+                    , application_name VARBINARY(256)
+                    , postipdiffservcodepoint TINYINT UNSIGNED
+                    , replication_factor INT UNSIGNED
+                    , PRIMARY KEY (id)
+                    );
+                """
+                c.execute(query)
+                self.conn.commit()
+                c.close()
 
     def disconnect(self):
-        pass
+        if self.conn is not None:
+            self.conn.disconnect()
+            self.conn = None
 
 
 def main():
