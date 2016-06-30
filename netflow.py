@@ -221,7 +221,7 @@ class NetflowRecordV5(NetflowRecord):
         pkt_data['unix_date'] = unpack(data[8:12])
         seq = unpack(data[16:20])
         pkt_data['src_id'] = unpack(data[20:22])
-        data = data[20:]
+        data = data[24:]
         if NetflowRecordV5.next_seq is not None and seq != NetflowRecordV5.next_seq:
             print("Lost Netflow packets detected: expected %d, got %d" % (NetflowRecordV5.next_seq, seq))
         NetflowRecordV5.next_seq = seq + rc_count
@@ -379,11 +379,12 @@ class DB(threading.Thread):
                 print("Error: %s" % str(e))
 
     def main_loop(self):
-        while True:
+        running = True
+        while running:
             if self.shutdown_event.is_set():
                 self.disconnect()
-                self.stop()
-            while not self.queue.empty():
+                running = False
+            while not (self.queue.empty() and running):
                 c = self.conn.cursor()
                 self.output_record(self.queue.get(), c)
                 self.conn.commit()
@@ -391,7 +392,7 @@ class DB(threading.Thread):
                 self.queue.task_done()
                 if self.shutdown_event.is_set():
                     self.disconnect()
-                    self.stop()
+                    running = False
             time.sleep(1)
 
     def output_record(self, record, c):
@@ -543,6 +544,7 @@ def main():
     except KeyboardInterrupt:
         pass
 
+    print("Shutting down")
     transport.close()
     loop.close()
     db_shutdown.set()
