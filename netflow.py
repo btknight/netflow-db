@@ -222,7 +222,8 @@ class NetflowRecordV5(NetflowRecord):
         pkt_data['src_id'] = unpack(data[20:22])
         data = data[24:]
         if NetflowRecordV5.next_seq is not None and seq != NetflowRecordV5.next_seq:
-            print("Lost Netflow packets detected: expected %d, got %d" % (NetflowRecordV5.next_seq, seq))
+            log_msg("NFv5 %s lost Netflow packets detected: expected %d, got %d" % (addr[0],
+                    NetflowRecordV5.next_seq, seq), msg_verb=2)
         NetflowRecordV5.next_seq = seq + rc_count
         NetflowRecordV5.time_offset[addr[0]] = pkt_data['unix_date'] - int(pkt_data['sysuptime'] / 1000)
         rc_found = 0
@@ -269,7 +270,8 @@ class NetflowRecordV9(NetflowRecord):
         pkt_data['src_id'] = unpack(data[18:20])
         data = data[20:]
         if NetflowRecordV9.seq is not None and seq != NetflowRecordV9.seq + 1:
-            print("Lost Netflow packets detected: expected %d, got %d" % (NetflowRecordV9.seq + 1, seq))
+            log_msg("NFv9 %s lost Netflow packets detected: expected %d, got %d" % (addr[0],
+                    NetflowRecordV9.seq + 1, seq), msg_verb=2)
         NetflowRecordV9.seq = seq
         NetflowRecordV9.time_offset[addr[0]] = pkt_data['unix_date'] - int(pkt_data['sysuptime'] / 1000)
         fs_found = 0
@@ -283,7 +285,7 @@ class NetflowRecordV9(NetflowRecord):
             else:
                 if (addr[0] not in NetflowRecordV9.templates or
                         template not in NetflowRecordV9.templates[addr[0]]):
-                    print("Template %s:%d not configured yet" % (addr[0], template))
+                    log_msg("Template %s:%d not configured yet" % (addr[0], template), msg_verb=2)
                     return []
                 new_recs = NetflowRecordV9.decode_records(data_fs, addr, pkt_data, template)
                 records.extend(new_recs)
@@ -307,7 +309,7 @@ class NetflowRecordV9(NetflowRecord):
             if addr[0] not in NetflowRecordV9.templates:
                 NetflowRecordV9.templates[addr[0]] = {}
             NetflowRecordV9.templates[addr[0]][template_id] = tuple([(f[0], f[1]) for f in field_list])
-            print("Template: rec'd %d from %s" % (template_id, addr[0]))
+            log_msg("Template: rec'd %d from %s" % (template_id, addr[0]), msg_verb=2)
             fs_found += 1
         return fs_found
 
@@ -344,7 +346,7 @@ class NetflowProtocol(asyncio.DatagramProtocol):
     db_q = queue.Queue()
 
     def connection_made(self, transport):
-        print("connected to Netflow socket")
+        log_msg("connected to Netflow socket", msg_verb=3)
 
     def datagram_received(self, data, addr):
         global db_q
@@ -355,9 +357,9 @@ class NetflowProtocol(asyncio.DatagramProtocol):
         elif version == 5:
             records = NetflowRecordV5.decode(data, addr)
         else:
-            print("Unsupported Netflow version %d from %s:%s" % (version, addr[0], addr[1]))
+            log_msg("Unsupported Netflow version %d from %s:%s" % (version, addr[0], addr[1]), facility=logging.warning)
         if len(records) > 0:
-            print("adding %d records to queue" % len(records))
+            log_msg("adding %d records to queue" % len(records), msg_verb=3)
         for r in records:
             NetflowProtocol.db_q.put(r)
 
@@ -370,6 +372,7 @@ class DB(threading.Thread):
         super().__init__()
         self.conn = None
         self.connect()
+        log_msg("Connected to SQL server %s" % self.conn_args['host'])
 
     def run(self):
         while not self.shutdown_event.is_set():
@@ -377,7 +380,7 @@ class DB(threading.Thread):
                 self.connect()
                 self.main_loop()
             except Exception as e:
-                print("Error: %s" % str(e))
+                log_msg("SQL connection error, attempting reconnect: %s" % str(e), facility=logging.warning)
 
     def main_loop(self):
         while not self.shutdown_event.is_set():
@@ -554,19 +557,21 @@ class DB(threading.Thread):
 
 
 def log_msg(msg, msg_verb=1, facility=logging.info):
+    global verbose
     if msg is not None:
-        #if msg_verb <= verbose:
-        #    print(msg)
+        if facility == logging.info and msg_verb <= verbose:
+            print(msg)
         facility(msg)
 
 
 def main(args):
+    local_addr = '0.0.0.0'
     loop = asyncio.get_event_loop()
     if os.name == 'posix':
         loop.add_signal_handler(signal.SIGTERM, loop.stop)
-    print("Starting UDP server")
-    listen = loop.create_datagram_endpoint(NetflowProtocol, local_addr=('0.0.0.0', args.port))
+    listen = loop.create_datagram_endpoint(NetflowProtocol, local_addr=(local_addr, args.port))
     transport, protocol = loop.run_until_complete(listen)
+    log_msg("Started Netflow listener on %s:%d" % (local_addr, args.port))
 
     db = None
     db_connect = {
@@ -590,7 +595,7 @@ def main(args):
     except KeyboardInterrupt:
         pass
 
-    print("Shutting down")
+    log_msg("Shutting down", facility=logging.error)
     transport.close()
     loop.close()
     db_shutdown.set()
@@ -612,14 +617,17 @@ if __name__ == '__main__':
     ap.add_argument('--dbname', '-D', default="netflow", help="database name")
     ap.add_argument('port', type=int, help="Netflow UDP listener port")
     ap.add_argument('--verbose', '-v', action='count', default=1, help="Verbosity of console messages")
+    ap.add_argument('--quiet', '-q', action='store_true',
+                    help="Suppress console messages (only warnings and errors will be shown")
 
     args = ap.parse_args()
 
     if args.port < 1 or args.port > 65535:
-        print("error: port must be 1-65535")
         ap.exit(-1, "error: port must be 1-65535")
 
     verbose = args.verbose
+    if args.quiet:
+        verbose = 0
 
     #if args.daemonize:
     #    if args.pidfile is None:
