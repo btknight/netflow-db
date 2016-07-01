@@ -3,7 +3,7 @@
 # netflow.py
 #
 # Decodes netflow messages and stores them in a database
-
+import argparse
 import asyncio
 import queue
 import threading
@@ -11,14 +11,12 @@ import struct
 import ipaddress
 import time
 import mysql.connector
+import os
+#from daemonize import Daemonize
+import logging
+import signal
 
 
-SQL_CONNECT = {
-    'user': 'netflow',
-    'password': 'netflow',
-    'host': '10.0.42.71',
-    'database': 'netflow'
-}
 NETFLOW_REC_V5 = {
     1: 'ipv4_src_addr',
     2: 'ipv4_dst_addr',
@@ -142,6 +140,7 @@ STRUCT_LEN = {
 }
 ALL_FIELDS = ['version', 'reporter', 'src_id', 'time_offset'] + [r for r in NETFLOW_REC_V9.values()]
 
+verbose = 1
 
 def unpack(data):
     ln = len(data)
@@ -364,14 +363,16 @@ class NetflowProtocol(asyncio.DatagramProtocol):
 
 
 class DB(threading.Thread):
-    def __init__(self, queue, shutdown_event):
+    def __init__(self, conn_args, queue, shutdown_event):
+        self.conn_args = conn_args
         self.queue = queue
         self.shutdown_event = shutdown_event
         super().__init__()
         self.conn = None
+        self.connect()
 
     def run(self):
-        while True:
+        while not self.shutdown_event.is_set():
             try:
                 self.connect()
                 self.main_loop()
@@ -379,21 +380,15 @@ class DB(threading.Thread):
                 print("Error: %s" % str(e))
 
     def main_loop(self):
-        running = True
-        while running:
-            if self.shutdown_event.is_set():
-                self.disconnect()
-                running = False
-            while not (self.queue.empty() and running):
+        while not self.shutdown_event.is_set():
+            while not self.queue.empty() and not self.shutdown_event.is_set():
                 c = self.conn.cursor()
                 self.output_record(self.queue.get(), c)
                 self.conn.commit()
                 c.close()
                 self.queue.task_done()
-                if self.shutdown_event.is_set():
-                    self.disconnect()
-                    running = False
             time.sleep(1)
+        self.disconnect()
 
     def output_record(self, record, c):
         column_list = [r for r in ALL_FIELDS if r in record]
@@ -404,7 +399,7 @@ class DB(threading.Thread):
 
     def connect(self):
         if self.conn is None or not self.conn.is_connected():
-            self.conn = mysql.connector.connect(**SQL_CONNECT)
+            self.conn = mysql.connector.connect(**self.conn_args)
             self.create_tables()
 
     def create_tables(self):
@@ -522,6 +517,35 @@ class DB(threading.Thread):
                 c.execute(query)
                 self.conn.commit()
                 c.close()
+            if 'netflow_v' not in tables:
+                c = self.conn.cursor()
+                query = """
+                    create view netflow_v
+                    AS
+                    select
+                    N.*
+                    , INET_NTOA(N.reporter) as reporter_a
+                    , INET_NTOA(N.ipv4_src_addr) as ipv4_src_addr_a
+                    , INET_NTOA(N.ipv4_dst_addr) as ipv4_dst_addr_a
+                    , INET_NTOA(N.ipv4_next_hop) as ipv4_next_hop_a
+                    , INET_NTOA(N.bgp_ipv4_next_hop) as bgp_ipv4_next_hop_a
+                    , INET_NTOA(N.ipv4_src_prefix) as ipv4_src_prefix_a
+                    , INET_NTOA(N.ipv4_dst_prefix) as ipv4_dst_prefix_a
+                    , N.src_tos >> 2 as src_dscp
+                    , N.dst_tos >> 2 as dst_dscp
+                    , from_unixtime(N.first_switched div 1000 + N.time_offset) as first_switched_d
+                    , from_unixtime(N.last_switched div 1000 + N.time_offset) as last_switched_d
+                    , (N.tcp_flags & 1) AS tcp_flags_fin
+                    , (N.tcp_flags & 2) >> 1 AS tcp_flags_syn
+                    , (N.tcp_flags & 4) >> 2 AS tcp_flags_rst
+                    , (N.tcp_flags & 8) >> 3 AS tcp_flags_psh
+                    , (N.tcp_flags & 16) >> 4 AS tcp_flags_ack
+                    , (N.tcp_flags & 32) >> 5 AS tcp_flags_urg
+                    from netflow as N;
+                """
+                c.execute(query)
+                self.conn.commit()
+                c.close()
 
     def disconnect(self):
         if self.conn is not None:
@@ -529,15 +553,37 @@ class DB(threading.Thread):
             self.conn = None
 
 
-def main():
-    db_shutdown = threading.Event()
-    db = DB(queue=NetflowProtocol.db_q, shutdown_event=db_shutdown)
-    db.start()
+def log_msg(msg, msg_verb=1, facility=logging.info):
+    if msg is not None:
+        #if msg_verb <= verbose:
+        #    print(msg)
+        facility(msg)
 
+
+def main(args):
     loop = asyncio.get_event_loop()
+    if os.name == 'posix':
+        loop.add_signal_handler(signal.SIGTERM, loop.stop)
     print("Starting UDP server")
-    listen = loop.create_datagram_endpoint(NetflowProtocol, local_addr=('0.0.0.0', 5000))
+    listen = loop.create_datagram_endpoint(NetflowProtocol, local_addr=('0.0.0.0', args.port))
     transport, protocol = loop.run_until_complete(listen)
+
+    db = None
+    db_connect = {
+        'user': args.dbuser,
+        'password': args.dbpassword,
+        'host': args.dbhost,
+        'database': args.dbname
+    }
+    db_shutdown = threading.Event()
+    try:
+        db = DB(conn_args=db_connect, queue=NetflowProtocol.db_q, shutdown_event=db_shutdown)
+    except mysql.connector.Error as e:
+        log_msg("could not connect to mysql database: %s" % str(e), facility=logging.error)
+        if db_connect['password'] is None:
+            log_msg("did you forget to specify a database password?", facility=logging.error)
+        exit(-1)
+    db.start()
 
     try:
         loop.run_forever()
@@ -551,4 +597,37 @@ def main():
     db.join(10)
 
 if __name__ == '__main__':
-    main()
+    if os.name == 'nt':
+        default_pidfile = r'%TEMP%\netflow.pid'
+    elif os.name == 'posix':
+        default_pidfile = r'/tmp/netflow.pid'
+    else:
+        default_pidfile = None
+    ap = argparse.ArgumentParser(description="Copy Netflow data to a MySQL database.")
+    ap.add_argument('--daemonize', '-d', action='store_true', help="run in background")
+    ap.add_argument('--pidfile', type=str, default=default_pidfile, help="location of pid file")
+    ap.add_argument('--dbuser', '-U', default="netflow", help="database user")
+    ap.add_argument('--dbpassword', '-P', help="database password")
+    ap.add_argument('--dbhost', '-H', default="127.0.0.1", help="database host")
+    ap.add_argument('--dbname', '-D', default="netflow", help="database name")
+    ap.add_argument('port', type=int, help="Netflow UDP listener port")
+    ap.add_argument('--verbose', '-v', action='count', default=1, help="Verbosity of console messages")
+
+    args = ap.parse_args()
+
+    if args.port < 1 or args.port > 65535:
+        print("error: port must be 1-65535")
+        ap.exit(-1, "error: port must be 1-65535")
+
+    verbose = args.verbose
+
+    #if args.daemonize:
+    #    if args.pidfile is None:
+    #        raise Exception("Attempted to run as daemon, but pid file was not provided, and cannot determine default location for pidfile")
+
+    #    d = Daemonize(app="netflow", pid=args.pidfile, action=main, args=args)
+    #    d.start()
+    #    logging.info("netflow started in background")
+    #else:
+    #    main(args)
+    main(args)
