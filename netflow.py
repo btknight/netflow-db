@@ -604,7 +604,6 @@ def main(args):
         log_msg("Caught KeyboardInterrupt", msg_verb=3)
 
     log_msg("Shutting down", facility=logging.error)
-    wait_task.print_stack()
     db_shutdown.set()
     db.join(10)
     transport.close()
